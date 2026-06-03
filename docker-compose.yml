@@ -60,6 +60,8 @@ services:
     image: ghcr.io/mlflow/mlflow:latest
     ports:
       - "5001:5000"
+    environment:
+      - MLFLOW_SERVER_ALLOWED_HOSTS=* # Allow all hosts to access the MLflow server
     volumes:
       - ./mlflow-data:/mlflow-data
     networks:
