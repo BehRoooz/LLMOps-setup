@@ -60,6 +60,10 @@ class PromptRequest(BaseModel):
     model: str = Field(default_factory=get_default_model)
     temperature: float = 0.7
     max_tokens: int = 150
+    # Optional: prepended as a "system" message to steer model behavior (role, tone, rules).
+    system_prompt: Optional[str] = None
+    # Optional: OpenAI-style response_format dict (e.g. {"type": "json_object"}) for structured output.
+    response_format: Optional[Dict[str, Any]] = None
 
 class PromptResponse(BaseModel):
     response: str
@@ -147,21 +151,40 @@ async def generate_text(prompt_request: PromptRequest):
             "request.model": prompt_request.model,
             "request.temperature": prompt_request.temperature,
             "request.max_tokens": prompt_request.max_tokens,
-            "request.prompt": prompt_request.prompt[:500]  # First 500 chars
+            "request.prompt": prompt_request.prompt[:500],  # First 500 chars
+            # Trace optional fields so MLflow shows whether advanced request params were used.
+            "request.system_prompt": prompt_request.system_prompt[:500] if prompt_request.system_prompt else None, # First 500 chars of the system prompt
+            "request.has_system_prompt": bool(prompt_request.system_prompt), # Whether the system prompt was used
+            "request.response_format": str(prompt_request.response_format) if prompt_request.response_format else None, # Response format
+            "request.has_response_format": bool(prompt_request.response_format), # Whether the response format was used
         })
 
     try:
         # Use direct HTTP requests to LiteLLM proxy to avoid client compatibility issues
         with mlflow.start_span("llm_call") as span:
             print(f"DEBUG: About to send request to LiteLLM with model: {prompt_request.model}")
-            span.add_event(SpanEvent("Sending request to LiteLLM proxy", attributes={"model": prompt_request.model}))
-            
+
+            # Build chat messages: system (if any) then user, matching OpenAI chat-completions shape.
+            messages = []
+            if prompt_request.system_prompt:
+                messages.append({"role": "system", "content": prompt_request.system_prompt})
+            messages.append({"role": "user", "content": prompt_request.prompt})
+
+            span.add_event(SpanEvent("Sending request to LiteLLM proxy", attributes={
+                "model": prompt_request.model,
+                "has_system_prompt": bool(prompt_request.system_prompt),
+                "has_response_format": bool(prompt_request.response_format),
+            }))
+
             request_payload = {
                 "model": prompt_request.model,
-                "messages": [{"role": "user", "content": prompt_request.prompt}],
+                "messages": messages,
                 "temperature": prompt_request.temperature,
-                "max_tokens": prompt_request.max_tokens
+                "max_tokens": prompt_request.max_tokens,
             }
+            # Forward response_format to LiteLLM when client requests JSON / schema-constrained output.
+            if prompt_request.response_format:
+                request_payload["response_format"] = prompt_request.response_format
             print(f"DEBUG: Request payload: {request_payload}")
             
             litellm_response = requests.post(
