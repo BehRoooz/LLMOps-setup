@@ -1,5 +1,19 @@
 services:
   # FastAPI application
+  mlflow-init:
+    build:
+      context: .
+      dockerfile: ./src/api/Dockerfile
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+    volumes:
+      - ./scripts:/app/scripts
+    networks:
+      - llmops-network
+    command: ["python", "/app/scripts/init_mlflow_experiments.py"]
+    restart: "no" # Run only once on startup and exit
   api:
     build:
       context: .
@@ -41,6 +55,7 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       # MLflow configuration for native tracing
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MLFLOW_EXPERIMENT_NAME=llmops-litellm-security
     volumes:
       - ./litellm/litellm-config.yaml:/app/config.yaml
     command: ["--config", "/app/config.yaml", "--port", "8000"]
@@ -48,6 +63,7 @@ services:
       - llmops-network
     depends_on:
       - mlflow
+      - mlflow-init
     # Health check
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
